@@ -1,66 +1,35 @@
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <cstdio>
-
-bool writeAll(HANDLE output, const void* data, DWORD size)
-{
-    const char* bytes = static_cast<const char*>(data);
-    while (size > 0) {
-        DWORD written = 0;
-        if (!WriteFile(output, bytes, size, &written, nullptr)) {
-            std::fprintf(stderr, "child2: WriteFile error %lu\n", GetLastError());
-            return false;
-        }
-        if (written == 0) return false;
-        bytes += written;
-        size -= written;
-    }
-    return true;
-}
+#include <iostream>
+#include <string>
 
 int main()
 {
-    HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
-    HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
-    if (!input || input == INVALID_HANDLE_VALUE ||
-        !output || output == INVALID_HANDLE_VALUE) return 1;
+    try {
+        std::string line;
+        while (std::getline(std::cin, line)) {
+            size_t length = 0;
+            bool previousSpace = false;
 
-    wchar_t buffer[2048];
-    DWORD pending = 0;
-    bool previousSpace = false;
-    for (;;) {
-        DWORD count = 0;
-        char* bytes = reinterpret_cast<char*>(buffer);
-        if (!ReadFile(input, bytes + pending, sizeof(buffer) - pending,
-                      &count, nullptr)) {
-            DWORD error = GetLastError();
-            if (error == ERROR_BROKEN_PIPE) break;
-            std::fprintf(stderr, "child2: ReadFile error %lu\n", error);
+            // Сжимаем пробелы внутри уже прочитанной строки.
+            for (char symbol : line) {
+                if (symbol != ' ' || !previousSpace)
+                    line[length++] = symbol;
+                previousSpace = symbol == ' ';
+            }
+            line.resize(length);
+
+            std::cout << line << std::endl;
+            if (!std::cout) {
+                std::cerr << "child2: output error\n";
+                return 1;
+            }
+        }
+        if (!std::cin.eof() || std::cin.bad()) {
+            std::cerr << "child2: input error\n";
             return 1;
         }
-        if (count == 0) break;
-
-        DWORD total = pending + count;
-        DWORD complete = total / sizeof(wchar_t);
-        char lastByte = bytes[total - 1];
-        DWORD resultCount = 0;
-        // Состояние сохраняется между блоками, но сбрасывается на переводе строки.
-        for (DWORD i = 0; i < complete; ++i) {
-            wchar_t symbol = buffer[i];
-            if (symbol != L' ' || !previousSpace)
-                buffer[resultCount++] = symbol;
-            previousSpace = symbol == L' ';
-        }
-        if (!writeAll(output, buffer, resultCount * sizeof(wchar_t))) return 1;
-        pending = total % sizeof(wchar_t);
-        if (pending) bytes[0] = lastByte;
-    }
-
-    if (pending) {
-        std::fprintf(stderr, "child2: incomplete UTF-16 character\n");
+    } catch (const std::exception& error) {
+        std::cerr << "child2: " << error.what() << '\n';
         return 1;
     }
-    bool inputClosed = CloseHandle(input) != FALSE;
-    bool outputClosed = CloseHandle(output) != FALSE;
-    return inputClosed && outputClosed ? 0 : 1;
+    return 0;
 }
